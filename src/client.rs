@@ -1,6 +1,8 @@
-use std::{net::{TcpStream, SocketAddr}, io::{Write}};
+use std::net::SocketAddr;
 
-pub fn handle_udp_packet(mut stream: &TcpStream, buf: [u8; 1024], size: usize, origin: SocketAddr) {
+use tokio::{net::TcpStream, io::AsyncWriteExt};
+
+pub async fn handle_udp_packet(stream: &mut TcpStream, buf: [u8; 1024], size: usize, origin: SocketAddr) {
     // Forward received packets to the TCP connection.
     let mut packet_data = [0; 1].to_vec();
     match origin {
@@ -18,7 +20,7 @@ pub fn handle_udp_packet(mut stream: &TcpStream, buf: [u8; 1024], size: usize, o
 
     let mut packet = (packet_data.len() as u32).to_be_bytes().to_vec();
     packet.append(&mut packet_data);
-    match stream.write_all(&packet) {
+    match stream.write_all(&packet).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to TCP server: {}", e),
     }

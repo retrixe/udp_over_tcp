@@ -1,9 +1,10 @@
 mod server;
 mod client;
 
-use std::{env, net::{TcpListener, TcpStream, UdpSocket}};
+use std::env;
 
 use client::handle_udp_packet;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use crate::server::handle_tcp_connection;
 
@@ -16,7 +17,8 @@ TCP packet spec:
   - N bytes: packet data
 */
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 4 {
         println!("Usage: ./udp_over_tcp server|client <from_port> <to_port>");
@@ -32,23 +34,22 @@ fn main() {
     // TODO: Support two-way forwarding (currently only one-way)!
     if mode == "server" {
         // Start a TCP server, forward received packets to UDP receivers.
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", from_port)).unwrap();
-        for stream in listener.incoming() {
-            let stream = stream.unwrap();
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
             println!("Connection established!");
-            handle_tcp_connection(&stream, to_port);
+            handle_tcp_connection(stream, to_port).await;
         }
     } else {
         // Start a UDP server, forward received packets to the TCP connection.
-        let listener = UdpSocket::bind(format!("127.0.0.1:{}", from_port)).unwrap();
-        let stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).unwrap();
+        let listener = UdpSocket::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
         let mut buf = [0; 1024];
-        
-        // TODO: Use tokio/async-std?
+
         loop {
-            match listener.recv_from(&mut buf) {
+            match listener.recv_from(&mut buf).await {
                 Ok((size, origin)) => {
-                    handle_udp_packet(&stream, buf, size, origin);
+                    handle_udp_packet(&mut stream, buf, size, origin).await;
                 },
                 Err(e) => println!("Couldn't recieve a datagram: {}", e)
             }
