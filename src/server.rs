@@ -4,10 +4,11 @@ use tokio::{net::{TcpStream, UdpSocket}, io::AsyncReadExt};
 
 use crate::packets;
 
-type Db = Arc<Mutex<HashMap<String, u16>>>;
+type Db = Arc<Mutex<HashMap<String, Arc<UdpSocket>>>>;
 
 pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
     // Create a common storage for port-mappings.
+    // TODO: Preserve these mappings across connections.
     // TODO: Make this an LRU cache, set a limit and discard old port-mappings.
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
 
@@ -51,20 +52,21 @@ async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
     };
     // TODO: Some apps may want a well-known port, and not have their UDP port
     // changed to an ephemeral one. How do we handle this?
-    let port = match db.lock().unwrap().get(&addr.to_string()) {
-        Some(p) => *p,
-        None => 0,
+    let mut sockets = db.lock().unwrap();
+    let socket = match sockets.get(&addr.to_string()) {
+        Some(p) => p.clone(),
+        None => {
+            let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    println!("Failed to bind UDP socket: {}", e);
+                    return;
+                }
+            };
+            sockets.insert(addr.to_string(), socket.clone());
+            socket
+        },
     };
-    let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], port))).await {
-        Ok(s) => s,
-        Err(e) => {
-            println!("Failed to bind UDP socket: {}", e);
-            return;
-        }
-    };
-    if port == 0 {
-        db.lock().unwrap().insert(addr.to_string(), socket.local_addr().unwrap().port());
-    }
     match socket.send_to(&body, SocketAddr::from(([127, 0, 0, 1], to_port))).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to UDP receiver: {}", e),
