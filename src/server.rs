@@ -42,7 +42,7 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
 
 async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
     // Forward received packets to the UDP receivers.
-    let (addr, body) = match packets::decode_client_udp_packet(packet) {
+    let (addr, body) = match packets::decode_udp_packet(packet) {
         Ok((a, b)) => (a, b),
         Err(e) => {
             println!("Failed to decode packet: {}", e);
