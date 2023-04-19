@@ -1,10 +1,16 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, collections::HashMap, sync::{Mutex, Arc}};
 
 use tokio::{net::{TcpStream, UdpSocket}, io::AsyncReadExt};
 
 use crate::packets;
 
+type Db = Arc<Mutex<HashMap<String, u16>>>;
+
 pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
+    // Create a common storage for port-mappings.
+    // TODO: Make this an LRU cache, set a limit and discard old port-mappings.
+    let db: Db = Arc::new(Mutex::new(HashMap::new()));
+
     // Read packets from the TCP connection.
     let mut buf = [0; 1024];
     let mut packet_size = 0;
@@ -21,7 +27,7 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
         }
         // If a packet read is queued, and the buffer is at least the packet size, read the packet.
         if packet_data.len() >= packet_size && packet_size > 0 {
-            handle_tcp_packet(packet_data[0..packet_size].to_vec(), to_port).await;
+            handle_tcp_packet(db.clone(), packet_data[0..packet_size].to_vec(), to_port).await;
             // If the buffer is larger than the packet size, read the next packet.
             if packet_data.len() > packet_size {
                 packet_data = packet_data[packet_size..].to_vec();
@@ -34,7 +40,7 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
     }
 }
 
-async fn handle_tcp_packet(packet: Vec<u8>, to_port: u16) {
+async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
     // Forward received packets to the UDP receivers.
     let (addr, body) = match packets::decode_client_udp_packet(packet) {
         Ok((a, b)) => (a, b),
@@ -43,17 +49,22 @@ async fn handle_tcp_packet(packet: Vec<u8>, to_port: u16) {
             return;
         }
     };
-    // TODO: Remove this.
-    println!("Forwarding packet to UDP receiver: {}", addr);
-    println!("Packet body: {:?}", body);
-    // TODO: Replace 7040 with randomised port-mapping.
-    let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 7040))).await {
+    // TODO: Some apps may want a well-known port, and not have their UDP port
+    // changed to an ephemeral one. How do we handle this?
+    let port = match db.lock().unwrap().get(&addr.to_string()) {
+        Some(p) => *p,
+        None => 0,
+    };
+    let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], port))).await {
         Ok(s) => s,
         Err(e) => {
             println!("Failed to bind UDP socket: {}", e);
             return;
         }
     };
+    if port == 0 {
+        db.lock().unwrap().insert(addr.to_string(), socket.local_addr().unwrap().port());
+    }
     match socket.send_to(&body, SocketAddr::from(([127, 0, 0, 1], to_port))).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to UDP receiver: {}", e),

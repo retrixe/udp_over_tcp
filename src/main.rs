@@ -20,8 +20,8 @@ async fn main() {
         println!("Usage: ./udp_over_tcp server|client <from_port> <to_port>");
         return;
     }
-    // TODO: Support two-way forwarding (currently only one-way)!
     if mode == "server" {
+        // TODO: Support 2-way forwarding.
         // Start a TCP server, forward received packets to UDP receivers.
         let listener = TcpListener::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
         loop {
@@ -30,6 +30,7 @@ async fn main() {
             server::handle_tcp_connection_read(stream, to_port).await;
         }
     } else {
+        // TODO: Support 2-way forwarding.
         // Start a UDP server, forward received packets to the TCP connection.
         let listener = UdpSocket::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
