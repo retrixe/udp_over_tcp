@@ -2,24 +2,11 @@ use std::net::SocketAddr;
 
 use tokio::{net::TcpStream, io::AsyncWriteExt};
 
+use crate::packets;
+
 pub async fn handle_udp_packet(stream: &mut TcpStream, buf: [u8; 1024], size: usize, origin: SocketAddr) {
     // Forward received packets to the TCP connection.
-    let mut packet_data = [0; 1].to_vec();
-    match origin {
-        SocketAddr::V4(ip) => {
-            packet_data[0] = 4;
-            packet_data.append(&mut ip.ip().octets().to_vec());
-        },
-        SocketAddr::V6(ip) => {
-            packet_data[0] = 6;
-            packet_data.append(&mut ip.ip().octets().to_vec());
-        },
-    }
-    packet_data.append(&mut origin.port().to_be_bytes().to_vec());
-    packet_data.append(&mut buf[0..size].to_vec());
-
-    let mut packet = (packet_data.len() as u32).to_be_bytes().to_vec();
-    packet.append(&mut packet_data);
+    let packet = packets::encode_client_udp_packet(buf, size, origin);
     match stream.write_all(&packet).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to TCP server: {}", e),

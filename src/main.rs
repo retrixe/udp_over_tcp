@@ -1,21 +1,10 @@
-mod server;
 mod client;
+mod packets;
+mod server;
 
 use std::env;
 
-use client::handle_udp_packet;
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-
-use crate::server::handle_tcp_connection;
-
-/*
-TCP packet spec:
-  - 4 bytes: packet body size (big endian)
-  - 1 byte: IPv4 (4) or IPv6 (6)
-  - 4 or 16 bytes: origin IP (big endian)
-  - 2 bytes: origin port (big endian)
-  - N bytes: packet data
-*/
 
 #[tokio::main]
 async fn main() {
@@ -38,7 +27,7 @@ async fn main() {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             println!("Connection established!");
-            handle_tcp_connection(stream, to_port).await;
+            server::handle_tcp_connection_read(stream, to_port).await;
         }
     } else {
         // Start a UDP server, forward received packets to the TCP connection.
@@ -49,7 +38,7 @@ async fn main() {
         loop {
             match listener.recv_from(&mut buf).await {
                 Ok((size, origin)) => {
-                    handle_udp_packet(&mut stream, buf, size, origin).await;
+                    client::handle_udp_packet(&mut stream, buf, size, origin).await;
                 },
                 Err(e) => println!("Couldn't recieve a datagram: {}", e)
             }
