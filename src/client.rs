@@ -20,30 +20,38 @@ pub async fn handle_tcp_connection_read(stream: &mut ReadHalf<TcpStream>, socket
     let mut buf = [0; 65535];
     let mut packet_size = 0;
     let mut packet_data = Vec::new();
-    // TODO: No error handling.
-    while let Ok(size) = stream.read(&mut buf).await {
-        if size == 0 {
-            break;
-        }
-        packet_data.append(&mut buf[0..size].to_vec());
-        // If no packet read is queued, and the buffer is 4 bytes long, read the packet size.
-        if packet_size == 0 && packet_data.len() >= 4 {
-            packet_size = u32::from_be_bytes([packet_data[0], packet_data[1], packet_data[2], packet_data[3]]) as usize;
-            packet_data = packet_data[4..].to_vec();
-        }
-        // If a packet read is queued, and the buffer is at least the packet size, read the packet.
-        if packet_data.len() >= packet_size && packet_size > 0 {
-            // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
-            // to maximise throughput, we should use an actor.
-            tokio::spawn(handle_tcp_packet(packet_data[0..packet_size].to_vec(), socket.clone()));
-            // If the buffer is larger than the packet size, read the next packet.
-            if packet_data.len() > packet_size {
-                packet_data = packet_data[packet_size..].to_vec();
-            } else {
-                packet_data = Vec::new();
-            }
-            // Reset the packet size (queue a new packet read).
-            packet_size = 0;
+    loop {
+        match stream.read(&mut buf).await {
+            Ok(size) => {
+                if size == 0 {
+                    break;
+                }
+                packet_data.append(&mut buf[0..size].to_vec());
+                // If no packet read is queued, and the buffer is 4 bytes long, read the packet size.
+                if packet_size == 0 && packet_data.len() >= 4 {
+                    packet_size = u32::from_be_bytes([packet_data[0], packet_data[1], packet_data[2], packet_data[3]]) as usize;
+                    packet_data = packet_data[4..].to_vec();
+                }
+                // If a packet read is queued, and the buffer is at least the packet size, read the packet.
+                if packet_data.len() >= packet_size && packet_size > 0 {
+                    // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
+                    // to maximise throughput, we should use an actor.
+                    tokio::spawn(handle_tcp_packet(
+                        packet_data[0..packet_size].to_vec(), socket.clone()));
+                    // If the buffer is larger than the packet size, read the next packet.
+                    if packet_data.len() > packet_size {
+                        packet_data = packet_data[packet_size..].to_vec();
+                    } else {
+                        packet_data = Vec::new();
+                    }
+                    // Reset the packet size (queue a new packet read).
+                    packet_size = 0;
+                }
+            },
+            Err(err) => {
+                println!("Failed to read from TCP connection, exiting: {}", err);
+                break;
+            },
         }
     }
 }
