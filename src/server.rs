@@ -1,23 +1,27 @@
 use std::{net::SocketAddr, collections::HashMap, sync::Arc};
 
-use tokio::{net::{TcpStream, UdpSocket}, io::AsyncReadExt, sync::Mutex};
+use tokio::{net::{TcpStream, UdpSocket}, io::{AsyncReadExt, WriteHalf, AsyncWriteExt}, sync::Mutex};
 
 use crate::packets;
 
 type Db = Arc<Mutex<HashMap<String, Arc<UdpSocket>>>>;
 
-pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
+pub async fn handle_tcp_connection_read(stream: TcpStream, to_port: u16) {
     // Create a common storage for port-mappings.
     // LOW-TODO: Preserve these mappings across connections.
     // LOW-TODO: Make this an LRU cache, set a limit and discard old port-mappings.
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
+
+    // Split the TCP stream into a reader and a writer.
+    let (mut reader, writer) = tokio::io::split(stream);
+    let writer_arc = Arc::new(Mutex::new(writer)); // Mutex prevents multiple writes.
 
     // Read packets from the TCP connection.
     let mut buf = [0; 1024];
     let mut packet_size = 0;
     let mut packet_data = Vec::new();
     // TODO: No error handling.
-    while let Ok(size) = stream.read(&mut buf).await {
+    while let Ok(size) = reader.read(&mut buf).await {
         if size == 0 {
             break;
         }
@@ -31,7 +35,12 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
         if packet_data.len() >= packet_size && packet_size > 0 {
             // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
             // to maximise throughput, we should use an actor.
-            tokio::spawn(handle_tcp_packet(db.clone(), packet_data[0..packet_size].to_vec(), to_port));
+            tokio::spawn(handle_tcp_packet(
+                db.clone(),
+                packet_data[0..packet_size].to_vec(),
+                to_port,
+                writer_arc.clone()
+            ));
             // If the buffer is larger than the packet size, read the next packet.
             if packet_data.len() > packet_size {
                 packet_data = packet_data[packet_size..].to_vec();
@@ -44,7 +53,9 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
     }
 }
 
-async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
+async fn handle_tcp_packet(
+    db: Db, packet: Vec<u8>, to_port: u16, tcp_writer: Arc<Mutex<WriteHalf<TcpStream>>>
+) {
     // Forward received packets to the UDP receivers.
     let (addr, body) = match packets::decode_udp_packet(packet) {
         Ok((a, b)) => (a, b),
@@ -67,6 +78,23 @@ async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
                     return;
                 }
             };
+            let socket_r = socket.clone();
+            // LOW-TODO: Implement channels to get rid of these when we have an LRU.
+            tokio::spawn(async move {
+                let mut buf = [0; 1024];
+                loop {
+                    match socket_r.recv_from(&mut buf).await {
+                        Ok((size, _)) => {
+                            let packet = packets::encode_udp_packet(buf, size, addr);
+                            match tcp_writer.lock().await.write_all(&packet).await {
+                                Ok(_) => {},
+                                Err(e) => println!("Failed to send packet to TCP sender: {}", e),
+                            }
+                        },
+                        Err(e) => println!("Failed to receive packet from UDP sender: {}", e),
+                    }
+                }
+            });
             sockets.insert(addr.to_string(), socket.clone());
             socket
         },

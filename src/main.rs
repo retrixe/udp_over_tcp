@@ -21,8 +21,8 @@ async fn main() {
         return;
     }
     if mode == "server" {
-        // TODO: Support 2-way forwarding.
         // Start a TCP server, forward received packets to UDP receivers.
+        // Internally, 2-way communication is implemented where UDP reader threads are spawned.
         let listener = TcpListener::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
         loop {
             let (stream, _) = listener.accept().await.unwrap();
