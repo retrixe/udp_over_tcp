@@ -6,7 +6,9 @@ use crate::packets;
 
 type Db = Arc<Mutex<HashMap<String, Arc<UdpSocket>>>>;
 
-pub async fn handle_tcp_connection_read(stream: TcpStream, to_port: u16) {
+pub async fn handle_tcp_connection_read(
+    stream: TcpStream, to_port: u16, disable_port_remapping: bool
+) {
     // Create a common storage for port-mappings.
     // LOW-TODO: Preserve these mappings across connections.
     // LOW-TODO: Make this an LRU cache, set a limit and discard old port-mappings.
@@ -39,7 +41,8 @@ pub async fn handle_tcp_connection_read(stream: TcpStream, to_port: u16) {
                 db.clone(),
                 packet_data[0..packet_size].to_vec(),
                 to_port,
-                writer_arc.clone()
+                writer_arc.clone(),
+                disable_port_remapping
             ));
             // If the buffer is larger than the packet size, read the next packet.
             if packet_data.len() > packet_size {
@@ -54,7 +57,8 @@ pub async fn handle_tcp_connection_read(stream: TcpStream, to_port: u16) {
 }
 
 async fn handle_tcp_packet(
-    db: Db, packet: Vec<u8>, to_port: u16, tcp_writer: Arc<Mutex<WriteHalf<TcpStream>>>
+    db: Db, packet: Vec<u8>, to_port: u16, tcp_writer: Arc<Mutex<WriteHalf<TcpStream>>>,
+    disable_port_remapping: bool
 ) {
     // Forward received packets to the UDP receivers.
     let (addr, body) = match packets::decode_udp_packet(packet) {
@@ -64,16 +68,16 @@ async fn handle_tcp_packet(
             return;
         }
     };
-    // LOW-TODO: Some apps may want a well-known port, and not have their UDP port
-    // changed to an ephemeral one. How do we handle this?
     let mut sockets = db.lock().await;
     let socket = match sockets.get(&addr.to_string()) {
         Some(p) => p.clone(),
         None => { // Accept connections back only from localhost for security reasons.
-            let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
+            // If port remapping is disabled, listen on the same port as the client.
+            let port = if disable_port_remapping { to_port } else { 0 };
+            let socket = match UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))).await {
                 Ok(s) => Arc::new(s),
                 Err(e) => {
-                    println!("Failed to bind UDP socket: {}", e);
+                    println!("Failed to bind UDP socket on port {}: {}", port, e);
                     return;
                 }
             };
