@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, collections::HashMap, sync::{Mutex, Arc}};
+use std::{net::SocketAddr, collections::HashMap, sync::Arc};
 
-use tokio::{net::{TcpStream, UdpSocket}, io::AsyncReadExt};
+use tokio::{net::{TcpStream, UdpSocket}, io::AsyncReadExt, sync::Mutex};
 
 use crate::packets;
 
@@ -8,14 +8,15 @@ type Db = Arc<Mutex<HashMap<String, Arc<UdpSocket>>>>;
 
 pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
     // Create a common storage for port-mappings.
-    // TODO: Preserve these mappings across connections.
-    // TODO: Make this an LRU cache, set a limit and discard old port-mappings.
+    // LOW-TODO: Preserve these mappings across connections.
+    // LOW-TODO: Make this an LRU cache, set a limit and discard old port-mappings.
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
 
     // Read packets from the TCP connection.
     let mut buf = [0; 1024];
     let mut packet_size = 0;
     let mut packet_data = Vec::new();
+    // TODO: No error handling.
     while let Ok(size) = stream.read(&mut buf).await {
         if size == 0 {
             break;
@@ -28,7 +29,9 @@ pub async fn handle_tcp_connection_read(mut stream: TcpStream, to_port: u16) {
         }
         // If a packet read is queued, and the buffer is at least the packet size, read the packet.
         if packet_data.len() >= packet_size && packet_size > 0 {
-            handle_tcp_packet(db.clone(), packet_data[0..packet_size].to_vec(), to_port).await;
+            // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
+            // to maximise throughput, we should use an actor.
+            tokio::spawn(handle_tcp_packet(db.clone(), packet_data[0..packet_size].to_vec(), to_port));
             // If the buffer is larger than the packet size, read the next packet.
             if packet_data.len() > packet_size {
                 packet_data = packet_data[packet_size..].to_vec();
@@ -50,9 +53,10 @@ async fn handle_tcp_packet(db: Db, packet: Vec<u8>, to_port: u16) {
             return;
         }
     };
-    // TODO: Some apps may want a well-known port, and not have their UDP port
+    // LOW-TODO: Some apps may want a well-known port, and not have their UDP port
     // changed to an ephemeral one. How do we handle this?
-    let mut sockets = db.lock().unwrap();
+    // LOW-TODO: We could make this locking mechanism slightly more efficient.
+    let mut sockets = db.lock().await;
     let socket = match sockets.get(&addr.to_string()) {
         Some(p) => p.clone(),
         None => {

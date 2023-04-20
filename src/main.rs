@@ -2,7 +2,7 @@ mod client;
 mod packets;
 mod server;
 
-use std::env;
+use std::{env, sync::Arc};
 
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
@@ -30,19 +30,27 @@ async fn main() {
             server::handle_tcp_connection_read(stream, to_port).await;
         }
     } else {
-        // TODO: Support 2-way forwarding.
         // Start a UDP server, forward received packets to the TCP connection.
-        let listener = UdpSocket::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
-        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
-        let mut buf = [0; 1024];
+        let socket = Arc::new(UdpSocket::bind(format!("127.0.0.1:{}", from_port)).await.unwrap());
+        let stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
+        let (mut read_stream, mut write_stream) = tokio::io::split(stream);
 
-        loop {
-            match listener.recv_from(&mut buf).await {
-                Ok((size, origin)) => {
-                    client::handle_udp_packet(&mut stream, buf, size, origin).await;
-                },
-                Err(e) => println!("Couldn't recieve a datagram: {}", e)
+        // Spawn UDP read thread.
+        let socket_r = socket.clone();
+        tokio::spawn(async move {
+            let mut buf = [0; 1024];
+            loop {
+                match socket_r.recv_from(&mut buf).await {
+                    Ok((size, origin)) => {
+                        client::handle_udp_packet(&mut write_stream, buf, size, origin).await;
+                    },
+                    Err(e) => println!("Couldn't recieve a datagram: {}", e)
+                }
             }
-        }
+        });
+
+        // Begin reading from the TCP connection for data to send back.
+        // UDP recv errors don't bring the app down, so no point threading this and using channels.
+        client::handle_tcp_connection_read(&mut read_stream, socket).await;
     }
 }
