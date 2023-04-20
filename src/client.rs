@@ -5,7 +5,7 @@ use tokio::{net::{UdpSocket, TcpStream}, io::{AsyncWriteExt, AsyncReadExt, ReadH
 use crate::packets;
 
 pub async fn handle_udp_packet(
-    stream: &mut WriteHalf<TcpStream>, buf: [u8; 1024], size: usize, origin: SocketAddr
+    stream: &mut WriteHalf<TcpStream>, buf: [u8; 65535], size: usize, origin: SocketAddr
 ) {
     // Forward received packets to the TCP connection.
     let packet = packets::encode_udp_packet(buf, size, origin);
@@ -17,7 +17,7 @@ pub async fn handle_udp_packet(
 
 pub async fn handle_tcp_connection_read(stream: &mut ReadHalf<TcpStream>, socket: Arc<UdpSocket>) {
     // Read from the TCP connection, forward datagrams back to UDP clients.
-    let mut buf = [0; 1024];
+    let mut buf = [0; 65535];
     let mut packet_size = 0;
     let mut packet_data = Vec::new();
     // TODO: No error handling.

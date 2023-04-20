@@ -17,7 +17,7 @@ pub async fn handle_tcp_connection_read(stream: TcpStream, to_port: u16) {
     let writer_arc = Arc::new(Mutex::new(writer)); // Mutex prevents multiple writes.
 
     // Read packets from the TCP connection.
-    let mut buf = [0; 1024];
+    let mut buf = [0; 65535];
     let mut packet_size = 0;
     let mut packet_data = Vec::new();
     // TODO: No error handling.
@@ -66,7 +66,6 @@ async fn handle_tcp_packet(
     };
     // LOW-TODO: Some apps may want a well-known port, and not have their UDP port
     // changed to an ephemeral one. How do we handle this?
-    // LOW-TODO: We could make this locking mechanism slightly more efficient.
     let mut sockets = db.lock().await;
     let socket = match sockets.get(&addr.to_string()) {
         Some(p) => p.clone(),
@@ -81,7 +80,7 @@ async fn handle_tcp_packet(
             let socket_r = socket.clone();
             // LOW-TODO: Implement channels to get rid of these when we have an LRU.
             tokio::spawn(async move {
-                let mut buf = [0; 1024];
+                let mut buf = [0; 65535];
                 loop {
                     match socket_r.recv_from(&mut buf).await {
                         Ok((size, _)) => {

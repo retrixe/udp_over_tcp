@@ -39,7 +39,7 @@ async fn main() {
         // Spawn UDP read thread.
         let socket_r = socket.clone();
         tokio::spawn(async move {
-            let mut buf = [0; 1024];
+            let mut buf = [0; 65535];
             loop {
                 match socket_r.recv_from(&mut buf).await {
                     Ok((size, origin)) => {

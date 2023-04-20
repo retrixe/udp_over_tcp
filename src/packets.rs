@@ -16,7 +16,7 @@ TCP server->client packet spec:
   - N bytes: packet data
 */
 
-pub fn encode_udp_packet(buf: [u8; 1024], size: usize, addr: SocketAddr) -> Vec<u8> {
+pub fn encode_udp_packet(buf: [u8; 65535], size: usize, addr: SocketAddr) -> Vec<u8> {
     let mut packet_data = [0; 1].to_vec();
     match addr {
         SocketAddr::V4(ip) => {
