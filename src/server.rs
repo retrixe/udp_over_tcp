@@ -70,7 +70,7 @@ async fn handle_tcp_packet(
     let mut sockets = db.lock().await;
     let socket = match sockets.get(&addr.to_string()) {
         Some(p) => p.clone(),
-        None => {
+        None => { // Accept connections back only from localhost for security reasons.
             let socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
                 Ok(s) => Arc::new(s),
                 Err(e) => {

@@ -23,6 +23,7 @@ async fn main() {
     if mode == "server" {
         // Start a TCP server, forward received packets to UDP receivers.
         // Internally, 2-way communication is implemented where UDP reader threads are spawned.
+        // Accept connections back only from localhost for security reasons.
         let listener = TcpListener::bind(format!("127.0.0.1:{}", from_port)).await.unwrap();
         loop {
             let (stream, _) = listener.accept().await.unwrap();
@@ -31,7 +32,7 @@ async fn main() {
         }
     } else {
         // Start a UDP server, forward received packets to the TCP connection.
-        let socket = Arc::new(UdpSocket::bind(format!("127.0.0.1:{}", from_port)).await.unwrap());
+        let socket = Arc::new(UdpSocket::bind(format!("0.0.0.0:{}", from_port)).await.unwrap());
         let stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
         let (mut read_stream, mut write_stream) = tokio::io::split(stream);
 
