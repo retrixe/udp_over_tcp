@@ -1,8 +1,10 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr};
 
-use tokio::{net::{UdpSocket, tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncWriteExt, AsyncReadExt}};
+use tokio::{net::{tcp::{OwnedReadHalf, OwnedWriteHalf}}, io::{AsyncWriteExt, AsyncReadExt}, sync::mpsc::Sender};
 
 use crate::packets;
+
+type UdpWriteChannel = Sender<(SocketAddr, Vec<u8>)>;
 
 pub async fn handle_udp_packet(
     stream: &mut OwnedWriteHalf, buf: [u8; 65535], size: usize, origin: SocketAddr
@@ -15,7 +17,7 @@ pub async fn handle_udp_packet(
     }
 }
 
-pub async fn handle_tcp_connection_read(stream: &mut OwnedReadHalf, socket: Arc<UdpSocket>) {
+pub async fn handle_tcp_connection_read(stream: &mut OwnedReadHalf, write_tx: UdpWriteChannel) {
     // Read from the TCP connection, forward datagrams back to UDP clients.
     let mut buf = [0; 65535];
     let mut packet_size = 0;
@@ -34,10 +36,9 @@ pub async fn handle_tcp_connection_read(stream: &mut OwnedReadHalf, socket: Arc<
                 }
                 // If a packet read is queued, and the buffer is at least the packet size, read the packet.
                 if packet_data.len() >= packet_size && packet_size > 0 {
-                    // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
-                    // to maximise throughput, we should use an actor.
+                    // Parse the received TCP packet and send it to the UDP write thread.
                     tokio::spawn(handle_tcp_packet(
-                        packet_data[0..packet_size].to_vec(), socket.clone()));
+                        packet_data[0..packet_size].to_vec(), write_tx.clone()));
                     // If the buffer is larger than the packet size, read the next packet.
                     if packet_data.len() > packet_size {
                         packet_data = packet_data[packet_size..].to_vec();
@@ -56,7 +57,7 @@ pub async fn handle_tcp_connection_read(stream: &mut OwnedReadHalf, socket: Arc<
     }
 }
 
-async fn handle_tcp_packet(packet: Vec<u8>, socket: Arc<UdpSocket>) {
+async fn handle_tcp_packet(packet: Vec<u8>, write_channel: UdpWriteChannel) {
     // Forward received packets to the UDP receivers.
     let (addr, body) = match packets::decode_udp_packet(packet) {
         Ok((a, b)) => (a, b),
@@ -65,7 +66,7 @@ async fn handle_tcp_packet(packet: Vec<u8>, socket: Arc<UdpSocket>) {
             return;
         }
     };
-    match socket.send_to(&body, addr).await {
+    match write_channel.send((addr, body)).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to UDP receiver: {}", e),
     }

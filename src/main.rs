@@ -2,9 +2,9 @@ mod client;
 mod packets;
 mod server;
 
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, net::SocketAddr};
 
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::{net::{TcpListener, TcpStream, UdpSocket}, sync::mpsc};
 
 #[tokio::main]
 async fn main() {
@@ -55,8 +55,21 @@ async fn main() {
             }
         });
 
+        // Spawn UDP write thread.
+        let socket_w = socket.clone();
+        let (tx, mut rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(32);
+        tokio::spawn(async move {
+            loop {
+                let (addr, buf) = rx.recv().await.unwrap();
+                match socket_w.send_to(&buf, addr).await {
+                    Ok(_) => {},
+                    Err(e) => println!("Couldn't send a datagram: {}", e)
+                }
+            }
+        });
+
         // Begin reading from the TCP connection for data to send back.
         // UDP recv errors don't bring the app down, so no point threading this and using channels.
-        client::handle_tcp_connection_read(&mut read_stream, socket).await;
+        client::handle_tcp_connection_read(&mut read_stream, tx).await;
     }
 }
