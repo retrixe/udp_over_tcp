@@ -39,7 +39,7 @@ async fn main() {
         // Start a UDP server, forward received packets to the TCP connection.
         let socket = Arc::new(UdpSocket::bind(format!("0.0.0.0:{}", from_port)).await.unwrap());
         let stream = TcpStream::connect(format!("127.0.0.1:{}", to_port)).await.unwrap();
-        let (mut read_stream, mut write_stream) = tokio::io::split(stream);
+        let (mut read_stream, mut write_stream) = stream.into_split();
 
         // Spawn UDP read thread.
         let socket_r = socket.clone();

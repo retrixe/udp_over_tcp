@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, collections::HashMap, sync::Arc};
 
-use tokio::{net::{TcpStream, UdpSocket}, io::{AsyncReadExt, WriteHalf, AsyncWriteExt}, sync::Mutex};
+use tokio::{net::{TcpStream, UdpSocket, tcp::OwnedWriteHalf}, io::{AsyncReadExt, AsyncWriteExt}, sync::Mutex};
 
 use crate::packets;
 
@@ -10,13 +10,14 @@ pub async fn handle_tcp_connection_read(
     stream: TcpStream, to_port: u16, disable_port_remapping: bool
 ) {
     // Create a common storage for port-mappings.
-    // LOW-TODO: Preserve these mappings across connections.
-    // LOW-TODO: Make this an LRU cache, set a limit and discard old port-mappings.
+    // TODO: Preserve these mappings across connections.
+    // TODO: Make this an LRU cache, set a limit and discard old port-mappings.
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
 
     // Split the TCP stream into a reader and a writer.
-    let (mut reader, writer) = tokio::io::split(stream);
-    let writer_arc = Arc::new(Mutex::new(writer)); // Mutex prevents multiple writes.
+    let (mut reader, writer) = stream.into_split();
+    // Arc allows multiple ownership, Mutex prevents multiple writes.
+    let writer_arc = Arc::new(Mutex::new(writer));
 
     // Read packets from the TCP connection.
     let mut buf = [0; 65535];
@@ -61,7 +62,7 @@ pub async fn handle_tcp_connection_read(
 }
 
 async fn handle_tcp_packet(
-    db: Db, packet: Vec<u8>, to_port: u16, tcp_writer: Arc<Mutex<WriteHalf<TcpStream>>>,
+    db: Db, packet: Vec<u8>, to_port: u16, tcp_writer: Arc<Mutex<OwnedWriteHalf>>,
     disable_port_remapping: bool
 ) {
     // Forward received packets to the UDP receivers.
@@ -86,7 +87,7 @@ async fn handle_tcp_packet(
                 }
             };
             let socket_r = socket.clone();
-            // LOW-TODO: Implement channels to get rid of these when we have an LRU.
+            // TODO: Implement channels to get rid of these when we have an LRU.
             tokio::spawn(async move {
                 let mut buf = [0; 65535];
                 loop {
