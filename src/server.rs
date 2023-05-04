@@ -1,10 +1,10 @@
 use std::{net::SocketAddr, collections::HashMap, sync::Arc};
 
-use tokio::{net::{TcpStream, UdpSocket, tcp::OwnedWriteHalf}, io::{AsyncReadExt, AsyncWriteExt}, sync::Mutex};
+use tokio::{net::{TcpStream, UdpSocket, tcp::OwnedWriteHalf}, io::{AsyncReadExt, AsyncWriteExt}, sync::{Mutex, mpsc::{self, Sender}}};
 
 use crate::packets;
 
-type Db = Arc<Mutex<HashMap<String, Arc<UdpSocket>>>>;
+type Db = Arc<Mutex<HashMap<String, Sender<(SocketAddr, Vec<u8>)>>>>;
 
 pub async fn handle_tcp_connection_read(
     stream: TcpStream, to_port: u16, disable_port_remapping: bool
@@ -37,8 +37,6 @@ pub async fn handle_tcp_connection_read(
                 }
                 // If a packet read is queued, and the buffer is at least the packet size, read the packet.
                 if packet_data.len() >= packet_size && packet_size > 0 {
-                    // TODO: This is fine only if UdpSocket::send_to is thread-safe, else,
-                    // to maximise throughput, we should use an actor.
                     tokio::spawn(handle_tcp_packet(
                         db.clone(), packet_data[0..packet_size].to_vec(), to_port,
                         writer_arc.clone(), disable_port_remapping
@@ -103,11 +101,22 @@ async fn handle_tcp_packet(
                     }
                 }
             });
-            sockets.insert(addr.to_string(), socket.clone());
-            socket
+            let (tx, mut rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(32);
+            let socket_w = socket.clone();
+            tokio::spawn(async move {
+                loop {
+                    let (addr, buf) = rx.recv().await.unwrap();
+                    match socket_w.send_to(&buf, addr).await {
+                        Ok(_) => {},
+                        Err(e) => println!("Failed to send packet to UDP receiver: {}", e),
+                    }
+                }
+            });
+            sockets.insert(addr.to_string(), tx.clone());
+            tx
         },
     };
-    match socket.send_to(&body, SocketAddr::from(([127, 0, 0, 1], to_port))).await {
+    match socket.send((SocketAddr::from(([127, 0, 0, 1], to_port)), body)).await {
         Ok(_) => {},
         Err(e) => println!("Failed to send packet to UDP receiver: {}", e),
     }
